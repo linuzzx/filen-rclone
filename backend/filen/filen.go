@@ -3,6 +3,7 @@
 package filen
 
 import (
+	"bytes"
 	"context"
 	sdk "github.com/JupiterPi/filen-sdk-go/filen"
 	"github.com/rclone/rclone/fs"
@@ -11,6 +12,7 @@ import (
 	"github.com/rclone/rclone/fs/config/obscure"
 	"github.com/rclone/rclone/fs/hash"
 	"io"
+	pathModule "path"
 	"time"
 )
 
@@ -57,6 +59,10 @@ type Fs struct {
 	filen *sdk.Filen
 }
 
+func (f *Fs) resolvePath(path string) string {
+	return pathModule.Join(f.root, path)
+}
+
 type Options struct {
 	Email    string `config:"email"`
 	Password string `config:"password"`
@@ -89,11 +95,7 @@ func (f *Fs) Features() *fs.Features {
 }
 
 func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err error) {
-	if len(dir) > 0 && []rune(dir)[len(dir)-1] != '/' {
-		dir = dir + "/"
-	}
-
-	dirUUID, err := f.filen.PathToUUID(dir, false)
+	dirUUID, err := f.filen.PathToUUID(f.resolvePath(dir), true)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +109,7 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 		entries = append(entries, &Directory{
 			fs:      f,
 			id:      directory.UUID,
-			path:    dir + directory.Name,
+			path:    pathModule.Join(dir, directory.Name),
 			size:    -1,
 			items:   -1,
 			created: directory.Created,
@@ -115,11 +117,9 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 	}
 	for _, file := range files {
 		entries = append(entries, &File{
-			fs:      f,
-			name:    file.Name,
-			path:    dir + file.Name,
-			size:    file.Size,
-			modTime: file.LastModified,
+			fs:   f,
+			file: file,
+			name: pathModule.Join(dir, file.Name),
 		})
 	}
 	return entries, nil
@@ -165,11 +165,9 @@ func (dir *Directory) ID() string {
 //TODO refactor Directory and File into one DirEntry?
 
 type File struct {
-	fs      *Fs
-	name    string
-	path    string
-	size    int64
-	modTime time.Time
+	fs   *Fs
+	file *sdk.File
+	name string
 }
 
 func (file *File) Fs() fs.Info {
@@ -181,15 +179,15 @@ func (file *File) String() string {
 }
 
 func (file *File) Remote() string {
-	return file.path
+	return file.name
 }
 
 func (file *File) ModTime(ctx context.Context) time.Time {
-	return file.modTime
+	return file.file.LastModified
 }
 
 func (file *File) Size() int64 {
-	return file.size
+	return file.file.Size
 }
 
 func (file *File) Hash(ctx context.Context, ty hash.Type) (string, error) {
@@ -205,7 +203,11 @@ func (file *File) SetModTime(ctx context.Context, t time.Time) error {
 }
 
 func (file *File) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
-	return nil, nil //TODO tmp
+	content, err := file.fs.filen.DownloadFileInMemory(file.file)
+	if err != nil {
+		return nil, err
+	}
+	return io.NopCloser(bytes.NewBuffer(content)), nil
 }
 
 func (file *File) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
