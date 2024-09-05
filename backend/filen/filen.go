@@ -1,11 +1,11 @@
-// Package filen provides an interface to
-// Filen cloud storage.
+// Package filen provides an interface to Filen cloud storage.
 package filen
 
 import (
 	"bytes"
 	"context"
-	sdk "github.com/JupiterPi/filen-sdk-go/filen"
+	"fmt"
+	sdk "github.com/FilenCloudDienste/filen-sdk-go/filen"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config/configmap"
 	"github.com/rclone/rclone/fs/config/configstruct"
@@ -13,6 +13,7 @@ import (
 	"github.com/rclone/rclone/fs/hash"
 	"io"
 	pathModule "path"
+	"strings"
 	"time"
 )
 
@@ -59,6 +60,7 @@ type Fs struct {
 	filen *sdk.Filen
 }
 
+// resolvePath returns the absolute path specified by the input path, which is seen relative to the remote's root.
 func (f *Fs) resolvePath(path string) string {
 	return pathModule.Join(f.root, path)
 }
@@ -77,7 +79,7 @@ func (f *Fs) Root() string {
 }
 
 func (f *Fs) String() string {
-	return "Filen to String"
+	return fmt.Sprintf("Filen %s at %s", f.filen.Email, f.root)
 }
 
 func (f *Fs) Precision() time.Duration {
@@ -90,12 +92,13 @@ func (f *Fs) Hashes() hash.Set {
 
 func (f *Fs) Features() *fs.Features {
 	return &fs.Features{
-		//TODO implement
+		CanHaveEmptyDirectories: true,
+		//TODO more optional features?
 	}
 }
 
 func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err error) {
-	dirUUID, err := f.filen.PathToUUID(f.resolvePath(dir), true)
+	dirUUID, _, err := f.filen.PathToUUID(f.resolvePath(dir), true)
 	if err != nil {
 		return nil, err
 	}
@@ -106,32 +109,88 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 	}
 
 	for _, directory := range directories {
-		entries = append(entries, &Directory{
-			fs:      f,
-			id:      directory.UUID,
-			path:    pathModule.Join(dir, directory.Name),
-			size:    -1,
-			items:   -1,
-			created: directory.Created,
-		})
+		entries = append(entries, &Directory{f, pathModule.Join(dir, directory.Name), directory})
 	}
 	for _, file := range files {
-		entries = append(entries, &File{
-			fs:   f,
-			file: file,
-			name: pathModule.Join(dir, file.Name),
-		})
+		entries = append(entries, &File{f, pathModule.Join(dir, file.Name), file})
 	}
 	return entries, nil
 }
 
+func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
+	uuid, isDirectory, err := f.filen.PathToUUID(f.resolvePath(remote), false)
+	if err != nil {
+		return nil, err
+	}
+	if isDirectory {
+		return nil, fs.ErrorObjectNotFound
+	}
+	file, err := f.filen.GetFile(uuid)
+	if err != nil {
+		return nil, err
+	}
+	return &File{f, remote, file}, nil
+}
+
+func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
+	return nil, nil //TODO tmp
+}
+
+func (f *Fs) Mkdir(ctx context.Context, dir string) error {
+	parentUUID := ""
+	dirName := ""
+
+	// find parent uuid and dir name
+	dir = f.resolvePath(dir)
+	lastSlashIdx := strings.LastIndex(dir, "/")
+	if lastSlashIdx == -1 {
+		// parent is base folder
+		uuid, err := f.filen.GetBaseFolderUUID()
+		if err != nil {
+			return err
+		}
+		parentUUID = uuid
+		dirName = dir
+	} else {
+		// parent is specified
+		parentPath, name := dir[:lastSlashIdx], dir[lastSlashIdx+1:]
+		uuid, _, err := f.filen.PathToUUID(parentPath, true)
+		if err != nil {
+			return err
+		}
+		parentUUID = uuid
+		dirName = name
+	}
+
+	// create directory
+	_, err := f.filen.CreateDirectory(parentUUID, dirName)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (f *Fs) Rmdir(ctx context.Context, dir string) error {
+	// find uuid
+	uuid, _, err := f.filen.PathToUUID(f.resolvePath(dir), true)
+	if err != nil {
+		return err
+	}
+
+	// trash directory
+	err = f.filen.TrashDirectory(uuid)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// Directory
+
 type Directory struct {
-	fs      *Fs
-	id      string
-	path    string
-	size    int64
-	items   int64
-	created time.Time
+	fs        *Fs
+	path      string
+	directory *sdk.Directory
 }
 
 func (dir *Directory) Fs() fs.Info {
@@ -139,7 +198,7 @@ func (dir *Directory) Fs() fs.Info {
 }
 
 func (dir *Directory) String() string {
-	return dir.path //TODO tmp
+	return dir.path
 }
 
 func (dir *Directory) Remote() string {
@@ -147,27 +206,27 @@ func (dir *Directory) Remote() string {
 }
 
 func (dir *Directory) ModTime(ctx context.Context) time.Time {
-	return dir.created //TODO best guess?
+	return dir.directory.Created //TODO best guess?
 }
 
 func (dir *Directory) Size() int64 {
-	return dir.size
+	return -1
 }
 
 func (dir *Directory) Items() int64 {
-	return dir.items
+	return -1
 }
 
 func (dir *Directory) ID() string {
-	return dir.id
+	return dir.directory.UUID
 }
 
-//TODO refactor Directory and File into one DirEntry?
+// File
 
 type File struct {
 	fs   *Fs
+	path string
 	file *sdk.File
-	name string
 }
 
 func (file *File) Fs() fs.Info {
@@ -175,11 +234,11 @@ func (file *File) Fs() fs.Info {
 }
 
 func (file *File) String() string {
-	return file.name
+	return file.path
 }
 
 func (file *File) Remote() string {
-	return file.name
+	return file.path
 }
 
 func (file *File) ModTime(ctx context.Context) time.Time {
@@ -216,20 +275,4 @@ func (file *File) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, o
 
 func (file *File) Remove(ctx context.Context) error {
 	return nil //TODO tmp
-}
-
-func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
-	return nil, nil
-}
-
-func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
-	return nil, nil
-}
-
-func (f *Fs) Mkdir(ctx context.Context, dir string) error {
-	return nil
-}
-
-func (f *Fs) Rmdir(ctx context.Context, dir string) error {
-	return nil
 }
