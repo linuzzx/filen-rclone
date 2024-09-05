@@ -79,7 +79,7 @@ func (f *Fs) Root() string {
 }
 
 func (f *Fs) String() string {
-	return fmt.Sprintf("Filen %s at %s", f.filen.Email, f.root)
+	return fmt.Sprintf("Filen %s at /%s", f.filen.Email, f.root)
 }
 
 func (f *Fs) Precision() time.Duration {
@@ -98,12 +98,14 @@ func (f *Fs) Features() *fs.Features {
 }
 
 func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err error) {
-	dirUUID, _, err := f.filen.PathToUUID(f.resolvePath(dir), true)
+	// find directory
+	_, directory, err := f.filen.FindItem(f.resolvePath(dir), true)
 	if err != nil {
 		return nil, err
 	}
 
-	files, directories, err := f.filen.ReadDirectory(dirUUID)
+	// read directory content
+	files, directories, err := f.filen.ReadDirectory(directory.UUID)
 	if err != nil {
 		return nil, err
 	}
@@ -118,16 +120,12 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 }
 
 func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
-	uuid, isDirectory, err := f.filen.PathToUUID(f.resolvePath(remote), false)
+	file, _, err := f.filen.FindItem(f.resolvePath(remote), false)
 	if err != nil {
 		return nil, err
 	}
-	if isDirectory {
+	if file == nil {
 		return nil, fs.ErrorObjectNotFound
-	}
-	file, err := f.filen.GetFile(uuid)
-	if err != nil {
-		return nil, err
 	}
 	return &File{f, remote, file}, nil
 }
@@ -154,11 +152,11 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 	} else {
 		// parent is specified
 		parentPath, name := dir[:lastSlashIdx], dir[lastSlashIdx+1:]
-		uuid, _, err := f.filen.PathToUUID(parentPath, true)
+		_, directory, err := f.filen.FindItem(parentPath, true)
 		if err != nil {
 			return err
 		}
-		parentUUID = uuid
+		parentUUID = directory.UUID
 		dirName = name
 	}
 
@@ -171,14 +169,14 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 }
 
 func (f *Fs) Rmdir(ctx context.Context, dir string) error {
-	// find uuid
-	uuid, _, err := f.filen.PathToUUID(f.resolvePath(dir), true)
+	// find directory
+	_, directory, err := f.filen.FindItem(f.resolvePath(dir), true)
 	if err != nil {
 		return err
 	}
 
 	// trash directory
-	err = f.filen.TrashDirectory(uuid)
+	err = f.filen.TrashDirectory(directory.UUID)
 	if err != nil {
 		return err
 	}
@@ -270,9 +268,18 @@ func (file *File) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCl
 }
 
 func (file *File) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
-	return nil //TODO tmp
+	uploadedFile, err := file.fs.filen.UploadFile(file.file.Name, file.file.ParentUUID, in)
+	if err != nil {
+		return err
+	}
+	file.file = uploadedFile
+	return nil
 }
 
 func (file *File) Remove(ctx context.Context) error {
-	return nil //TODO tmp
+	err := file.fs.filen.TrashFile(file.file.UUID)
+	if err != nil {
+		return err
+	}
+	return nil
 }
