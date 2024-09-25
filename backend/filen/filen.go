@@ -99,13 +99,13 @@ func (f *Fs) Features() *fs.Features {
 
 func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err error) {
 	// find directory
-	_, directory, err := f.filen.FindItem(f.resolvePath(dir), true)
+	directoryUUID, err := f.filen.FindItemUUID(f.resolvePath(dir), true)
 	if err != nil {
 		return nil, err
 	}
 
 	// read directory content
-	files, directories, err := f.filen.ReadDirectory(directory.UUID)
+	files, directories, err := f.filen.ReadDirectory(directoryUUID)
 	if err != nil {
 		return nil, err
 	}
@@ -152,11 +152,11 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 	} else {
 		// parent is specified
 		parentPath, name := dir[:lastSlashIdx], dir[lastSlashIdx+1:]
-		_, directory, err := f.filen.FindItem(parentPath, true)
+		directoryUUID, err := f.filen.FindItemUUID(parentPath, true)
 		if err != nil {
 			return err
 		}
-		parentUUID = directory.UUID
+		parentUUID = directoryUUID
 		dirName = name
 	}
 
@@ -170,13 +170,13 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 
 func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 	// find directory
-	_, directory, err := f.filen.FindItem(f.resolvePath(dir), true)
+	directoryUUID, err := f.filen.FindItemUUID(f.resolvePath(dir), true)
 	if err != nil {
 		return err
 	}
 
 	// trash directory
-	err = f.filen.TrashDirectory(directory.UUID)
+	err = f.filen.TrashDirectory(directoryUUID)
 	if err != nil {
 		return err
 	}

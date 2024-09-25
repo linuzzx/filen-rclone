@@ -11,7 +11,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.3.2
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azfile v1.2.2
 	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358
-	github.com/FilenCloudDienste/filen-sdk-go v0.0.2
+	github.com/FilenCloudDienste/filen-sdk-go v0.0.3
 	github.com/Max-Sum/base32768 v0.0.0-20230304063302-18e6ce5945fd
 	github.com/Unknwon/goconfig v1.0.0
 	github.com/a8m/tree v0.0.0-20240104212747-2c8764a5f17e
