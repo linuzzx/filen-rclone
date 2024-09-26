@@ -4,6 +4,7 @@ package filen
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	sdk "github.com/FilenCloudDienste/filen-sdk-go/filen"
 	"github.com/rclone/rclone/fs"
@@ -98,10 +99,40 @@ func (f *Fs) Features() *fs.Features {
 }
 
 func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err error) {
-	// find directory
+	// find directory uuid
 	directoryUUID, err := f.filen.FindItemUUID(f.resolvePath(dir), true)
 	if err != nil {
 		return nil, err
+	}
+
+	// if none found, try parent directory and return only item specified by path
+	if directoryUUID == "" {
+		// get parent uuid
+		parentPath := pathModule.Join(f.resolvePath(dir), "..")
+		if parentPath == "." {
+			parentPath = ""
+		}
+		directoryUUID, err = f.filen.FindItemUUID(parentPath, true)
+		if err != nil {
+			return nil, err
+		}
+		if directoryUUID == "" {
+			return nil, errors.New(fmt.Sprintf("directory %s not found", f.resolvePath(dir)))
+		}
+
+		// read files and find specified
+		files, _, err := f.filen.ReadDirectory(directoryUUID)
+		if err != nil {
+			return nil, err
+		}
+		fileName := pathModule.Base(f.resolvePath(dir))
+		for _, file := range files {
+			if file.Name == fileName {
+				entries = append(entries, &File{f, file.Name, file})
+				return entries, nil
+			}
+		}
+		return nil, errors.New(fmt.Sprintf("item %s not found in directory %s", pathModule.Base(f.resolvePath(dir)), pathModule.Join(f.resolvePath(dir), "..")))
 	}
 
 	// read directory content
