@@ -14,7 +14,6 @@ import (
 	"github.com/rclone/rclone/fs/hash"
 	"io"
 	pathModule "path"
-	"strings"
 	"time"
 )
 
@@ -162,37 +161,20 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 }
 
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
-	return nil, nil //TODO tmp
+	fileName := src.Remote()
+	parentUUID, err := f.filen.FindDirectoryOrCreate(f.root)
+	if err != nil {
+		return nil, err
+	}
+	uploadedFile, err := f.filen.UploadFile(fileName, parentUUID, in)
+	if err != nil {
+		return nil, err
+	}
+	return &File{f, fileName, uploadedFile}, nil
 }
 
 func (f *Fs) Mkdir(ctx context.Context, dir string) error {
-	parentUUID := ""
-	dirName := ""
-
-	// find parent uuid and dir name
-	dir = f.resolvePath(dir)
-	lastSlashIdx := strings.LastIndex(dir, "/")
-	if lastSlashIdx == -1 {
-		// parent is base folder
-		uuid, err := f.filen.GetBaseFolderUUID()
-		if err != nil {
-			return err
-		}
-		parentUUID = uuid
-		dirName = dir
-	} else {
-		// parent is specified
-		parentPath, name := dir[:lastSlashIdx], dir[lastSlashIdx+1:]
-		directoryUUID, err := f.filen.FindItemUUID(parentPath, true)
-		if err != nil {
-			return err
-		}
-		parentUUID = directoryUUID
-		dirName = name
-	}
-
-	// create directory
-	_, err := f.filen.CreateDirectory(parentUUID, dirName)
+	_, err := f.filen.FindDirectoryOrCreate(f.resolvePath(dir))
 	if err != nil {
 		return err
 	}
@@ -205,6 +187,9 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 	if err != nil {
 		return err
 	}
+	if directoryUUID == "" {
+		return fs.ErrorDirNotFound
+	}
 
 	// trash directory
 	err = f.filen.TrashDirectory(directoryUUID)
@@ -212,6 +197,8 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) error {
 		return err
 	}
 	return nil
+
+	//TODO return an error if it isn't empty
 }
 
 // Directory
