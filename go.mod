@@ -1,4 +1,4 @@
-module github.com/rclone/rclone
+module github.com/linuzzx/filen-rclone
 
 go 1.22
 
